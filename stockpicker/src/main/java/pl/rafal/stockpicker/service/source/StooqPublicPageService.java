@@ -86,10 +86,16 @@ public class StooqPublicPageService {
         try {
             HttpResponse<String> response = session.fetchString(wig20CsvUrl, StandardCharsets.UTF_8);
             long elapsed = System.currentTimeMillis() - startTime;
+            String contentType = response.headers().firstValue("content-type").orElse("?");
+            int bodyLen = response.body() == null ? 0 : response.body().length();
+            log.info("CSV response: HTTP {} ({} bajtów, content-type={}, {} ms)",
+                    response.statusCode(), bodyLen, contentType, elapsed);
 
             if (response.statusCode() != 200) {
+                String snippet = response.body() == null ? null
+                        : response.body().substring(0, Math.min(500, response.body().length()));
                 return ScrapeResult.failure(
-                        "CSV HTTP " + response.statusCode(), wig20CsvUrl, elapsed, null);
+                        "CSV HTTP " + response.statusCode(), wig20CsvUrl, elapsed, snippet);
             }
 
             String body = response.body();
@@ -101,7 +107,8 @@ public class StooqPublicPageService {
             String bodyLower = body.toLowerCase();
             if (bodyLower.contains("<html") || bodyLower.contains("apikey")
                     || bodyLower.contains("uzyskaj")) {
-                log.warn("Endpoint CSV zwrócił HTML/apikey - sesja niezalogowana?");
+                log.warn("Endpoint CSV zwrócił HTML/apikey - sesja niezalogowana? Snippet: {}",
+                        body.substring(0, Math.min(200, body.length())).replace("\n", " "));
                 return ScrapeResult.failure(
                         "CSV endpoint zwrócił HTML zamiast danych (apikey wall)",
                         wig20CsvUrl, elapsed, body.substring(0, Math.min(500, body.length())));
@@ -109,6 +116,10 @@ public class StooqPublicPageService {
 
             List<QuoteRow> quotes = parseCsv(body);
             log.info("CSV sparsowany: {} wierszy w {} ms", quotes.size(), elapsed);
+            if (quotes.isEmpty()) {
+                log.warn("CSV miał 0 wierszy - pierwsza linia: '{}'",
+                        body.split("\n", 2)[0]);
+            }
             return ScrapeResult.success(quotes, wig20CsvUrl, elapsed);
 
         } catch (IOException | InterruptedException e) {
@@ -116,7 +127,7 @@ public class StooqPublicPageService {
                 Thread.currentThread().interrupt();
             }
             long elapsed = System.currentTimeMillis() - startTime;
-            log.warn("Błąd pobierania CSV: {}", e.getMessage());
+            log.warn("Błąd pobierania CSV ({}): {}", e.getClass().getSimpleName(), e.getMessage());
             return ScrapeResult.failure(
                     "CSV error: " + e.getClass().getSimpleName() + " - " + e.getMessage(),
                     wig20CsvUrl, elapsed, null);
@@ -132,14 +143,32 @@ public class StooqPublicPageService {
         try {
             HttpResponse<String> response = session.fetchString(wig20HtmlUrl, StandardCharsets.UTF_8);
             long elapsed = System.currentTimeMillis() - startTime;
+            String contentType = response.headers().firstValue("content-type").orElse("?");
+            int bodyLen = response.body() == null ? 0 : response.body().length();
+            log.info("HTML response: HTTP {} ({} bajtów, content-type={}, finalUri={}, {} ms)",
+                    response.statusCode(), bodyLen, contentType, response.uri(), elapsed);
 
             if (response.statusCode() != 200) {
+                String snippet = response.body() == null ? null
+                        : response.body().substring(0, Math.min(500, response.body().length()));
                 return ScrapeResult.failure(
-                        "HTML HTTP " + response.statusCode(), wig20HtmlUrl, elapsed, null);
+                        "HTML HTTP " + response.statusCode(), wig20HtmlUrl, elapsed, snippet);
             }
 
             String body = response.body();
             Document doc = Jsoup.parse(body, wig20HtmlUrl);
+
+            // Diagnostic: sprawdź czy strona to consent wall / logowanie.
+            String bodyLower = body.toLowerCase();
+            boolean looksLikeConsentWall = bodyLower.contains("zgoda") && bodyLower.contains("cookie");
+            boolean looksLikeLoginPage = bodyLower.contains("formularz logowania")
+                    || (bodyLower.contains("name=\"a\"") && bodyLower.contains("name=\"b\""));
+            if (looksLikeConsentWall) {
+                log.warn("HTML wygląda na consent wall (zgoda/cookie) - sesja prawdopodobnie niezalogowana");
+            }
+            if (looksLikeLoginPage) {
+                log.warn("HTML wygląda na stronę logowania - sesja wygasła lub login nie powiódł się");
+            }
 
             List<QuoteRow> quotes = parseQuotesFromDocument(doc);
 
@@ -147,7 +176,8 @@ public class StooqPublicPageService {
                 String htmlSnippet = body.length() > 2000
                         ? body.substring(0, 2000) + "\n... (obcięto)"
                         : body;
-                log.warn("Parser HTML nie znalazł tabeli notowań. HTML length: {}", body.length());
+                log.warn("Parser HTML nie znalazł tabeli notowań. HTML length: {}, consentWall={}, loginPage={}",
+                        body.length(), looksLikeConsentWall, looksLikeLoginPage);
                 return ScrapeResult.failure(
                         "Strona załadowana ale parser nie znalazł tabeli notowań. " +
                         "Jeśli widzisz w HTML consent wall - sprawdź czy logowanie do stooq " +
@@ -163,7 +193,7 @@ public class StooqPublicPageService {
                 Thread.currentThread().interrupt();
             }
             long elapsed = System.currentTimeMillis() - startTime;
-            log.error("Błąd pobierania HTML: {}", e.getMessage(), e);
+            log.error("Błąd pobierania HTML ({}): {}", e.getClass().getSimpleName(), e.getMessage(), e);
             return ScrapeResult.failure(
                     "HTML error: " + e.getClass().getSimpleName() + " - " + e.getMessage(),
                     wig20HtmlUrl, elapsed, null);

@@ -36,13 +36,11 @@ public class CacheConfig {
 
     @Bean
     public CacheManager cacheManager() {
-        // Dodaję drugi cache dla publicznej strony WIG20. Oba cache'y dzielą
-        // tę samą konfigurację Caffeine (4h TTL), ale mogą być niezależnie
-        // inwalidowane. W przyszłości można by każdy mieć inny TTL - np.
-        // publiczne notowania cache'ować krócej (godzinę) jeśli strona się
-        // aktualizuje częściej niż dane historyczne.
+        // weeklyCandles - historyczne notowania per ticker (jeden klucz na ticker).
+        // wig20Composition - lista 20 spółek WIG20 ze stopami zwrotu (jeden klucz "wig20").
+        // Wspólne TTL 4h: po sesji GPW (17:30) cache wygasa do następnego dnia.
         CaffeineCacheManager cacheManager = new CaffeineCacheManager(
-                "weeklyCandles", "wig20Page", "wig20Composition");
+                "weeklyCandles", "wig20Composition");
         cacheManager.setCaffeine(Caffeine.newBuilder()
                 .expireAfterWrite(4, TimeUnit.HOURS)
                 .maximumSize(1000)

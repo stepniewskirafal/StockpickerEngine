@@ -1,6 +1,5 @@
 package pl.rafal.stockpicker.service.source;
 
-import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Locator;
@@ -9,8 +8,6 @@ import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.TimeoutError;
 import com.microsoft.playwright.options.LoadState;
-// TimeoutError extends PlaywrightException - jest używany przez Playwright wewnętrznie,
-// w try/catch łapiemy tylko bazowy typ.
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -118,7 +115,7 @@ public class PlaywrightStooqSession {
             log.error("PlaywrightStooqSession: nie udało się zainicjalizować Playwright. " +
                     "Czy ściągnięto Chromium? Uruchom: 'mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args=\"install chromium\"'",
                     e);
-            cleanupOnFailure();
+            shutdown();
             throw new IllegalStateException("Playwright init failed", e);
         }
     }
@@ -193,8 +190,18 @@ public class PlaywrightStooqSession {
 
     @PreDestroy
     void shutdown() {
-        log.info("PlaywrightStooqSession: zamykam Playwright");
-        cleanupOnFailure();
+        if (browserContext != null) {
+            try { browserContext.close(); } catch (Exception e) {
+                log.warn("PlaywrightStooqSession: błąd zamykania BrowserContext: {}", e.getMessage());
+            }
+            browserContext = null;
+        }
+        if (playwright != null) {
+            try { playwright.close(); } catch (Exception e) {
+                log.warn("PlaywrightStooqSession: błąd zamykania Playwright: {}", e.getMessage());
+            }
+            playwright = null;
+        }
     }
 
     /**
@@ -246,18 +253,4 @@ public class PlaywrightStooqSession {
         }
     }
 
-    private void cleanupOnFailure() {
-        if (browserContext != null) {
-            try { browserContext.close(); } catch (Exception e) {
-                log.warn("Błąd zamykania BrowserContext: {}", e.getMessage());
-            }
-            browserContext = null;
-        }
-        if (playwright != null) {
-            try { playwright.close(); } catch (Exception e) {
-                log.warn("Błąd zamykania Playwright: {}", e.getMessage());
-            }
-            playwright = null;
-        }
-    }
 }

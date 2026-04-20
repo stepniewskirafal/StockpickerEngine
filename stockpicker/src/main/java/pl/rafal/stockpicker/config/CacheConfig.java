@@ -42,7 +42,7 @@ public class CacheConfig {
         // publiczne notowania cache'ować krócej (godzinę) jeśli strona się
         // aktualizuje częściej niż dane historyczne.
         CaffeineCacheManager cacheManager = new CaffeineCacheManager(
-                "weeklyCandles", "wig20Page");
+                "weeklyCandles", "wig20Page", "wig20Composition");
         cacheManager.setCaffeine(Caffeine.newBuilder()
                 .expireAfterWrite(4, TimeUnit.HOURS)
                 .maximumSize(1000)

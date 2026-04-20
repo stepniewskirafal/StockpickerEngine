@@ -6,6 +6,8 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import pl.rafal.stockpicker.service.source.StooqIndexCompositionService;
+import pl.rafal.stockpicker.service.source.StooqIndexCompositionService.CompositionResult;
 import pl.rafal.stockpicker.service.source.StooqPublicPageService;
 import pl.rafal.stockpicker.service.source.StooqPublicPageService.ScrapeResult;
 
@@ -25,6 +27,7 @@ import pl.rafal.stockpicker.service.source.StooqPublicPageService.ScrapeResult;
 public class Wig20Controller {
 
     private final StooqPublicPageService stooqPublicPageService;
+    private final StooqIndexCompositionService compositionService;
 
     @GetMapping("/wig20")
     public String showWig20(Model model, @RequestParam(required = false) Boolean refresh) {
@@ -37,5 +40,14 @@ public class Wig20Controller {
         model.addAttribute("result", result);
         model.addAttribute("quoteCount", result.getQuotes().size());
         return "wig20";
+    }
+
+    @GetMapping("/wig20-sklad")
+    public String showWig20Composition(Model model) {
+        CompositionResult result = compositionService.fetchWig20Composition();
+        model.addAttribute("result", result);
+        model.addAttribute("rowCount", result.getRows().size());
+        model.addAttribute("returnLabels", result.returnLabels());
+        return "wig20-sklad";
     }
 }

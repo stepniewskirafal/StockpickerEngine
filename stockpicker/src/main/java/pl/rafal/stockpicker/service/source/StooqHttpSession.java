@@ -28,6 +28,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
@@ -201,23 +202,35 @@ public class StooqHttpSession {
         return new WrappedResponse(raw, body);
     }
 
-    private byte[] decodeBody(byte[] bytes, String encoding) throws IOException {
+    private byte[] decodeBody(byte[] bytes, String encoding) {
         if (bytes.length == 0) return bytes;
-        try {
-            if ("gzip".equals(encoding) || "x-gzip".equals(encoding)) {
-                try (GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
+        if ("gzip".equals(encoding) || "x-gzip".equals(encoding)) {
+            try (GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
+                return in.readAllBytes();
+            } catch (IOException e) {
+                log.warn("StooqHttpSession: dekompresja gzip nie powiodła się ({}), zwracam surowe bajty",
+                        e.getMessage());
+                return bytes;
+            }
+        }
+        if ("deflate".equals(encoding)) {
+            // HTTP 'deflate' jest historycznie dwuznaczne:
+            //  - RFC 1950 (zlib): bajty mają header zlib (0x78 0x9C etc.)
+            //  - RAW deflate: same skompresowane dane bez headera
+            // Stooq wysyła RAW deflate (standardowe zlib rzuca 'incorrect header check').
+            // Próbujemy najpierw zlib (bo tak jest w RFC 2616), potem raw.
+            try (InflaterInputStream in = new InflaterInputStream(new ByteArrayInputStream(bytes))) {
+                return in.readAllBytes();
+            } catch (IOException zlibError) {
+                try (InflaterInputStream in = new InflaterInputStream(
+                        new ByteArrayInputStream(bytes), new Inflater(true))) {
                     return in.readAllBytes();
+                } catch (IOException rawError) {
+                    log.warn("StooqHttpSession: dekompresja deflate (zlib: {}, raw: {}), zwracam surowe bajty",
+                            zlibError.getMessage(), rawError.getMessage());
+                    return bytes;
                 }
             }
-            if ("deflate".equals(encoding)) {
-                try (InflaterInputStream in = new InflaterInputStream(new ByteArrayInputStream(bytes))) {
-                    return in.readAllBytes();
-                }
-            }
-        } catch (IOException e) {
-            log.warn("StooqHttpSession: dekompresja '{}' nie powiodła się ({}), zwracam surowe bajty",
-                    encoding, e.getMessage());
-            return bytes;
         }
         return bytes;
     }

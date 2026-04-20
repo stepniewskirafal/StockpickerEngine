@@ -19,7 +19,11 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -156,6 +160,14 @@ public class StooqPublicPageService {
             }
 
             String body = response.body();
+
+            // Dump pełnego body do pliku - ułatwia porównanie z tym co widzi przeglądarka.
+            // Lokalizacja w target/ żeby było łatwo znaleźć, nazwa ze znacznikiem czasu
+            // żeby kolejne odświeżenia nie nadpisywały poprzednich dumpów.
+            Path dumpPath = dumpBodyToFile("wig20-html", body);
+            if (dumpPath != null) {
+                log.info("Pełne body HTML zapisane do: {}", dumpPath.toAbsolutePath());
+            }
 
             // Diagnostyka strukturalna - sprawdzamy czy jsoup w ogóle widzi tagi z których
             // parser dostarcza tabele. Jeśli <table> jest w body ale jsoup tego nie znajduje,
@@ -305,6 +317,21 @@ public class StooqPublicPageService {
             idx += needle.length();
         }
         return count;
+    }
+
+    private static final DateTimeFormatter DUMP_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
+    private Path dumpBodyToFile(String prefix, String body) {
+        try {
+            Path targetDir = Paths.get("target", "stooq-dumps");
+            Files.createDirectories(targetDir);
+            Path file = targetDir.resolve(prefix + "-" + LocalDateTime.now().format(DUMP_TS) + ".html");
+            Files.writeString(file, body == null ? "" : body, StandardCharsets.UTF_8);
+            return file;
+        } catch (IOException e) {
+            log.warn("Nie udało się zapisać dumpa body: {}", e.getMessage());
+            return null;
+        }
     }
 
     // ---- HTML parsing (fallback) --------------------------------------------

@@ -26,6 +26,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.Inflater;
@@ -309,6 +314,10 @@ public class StooqHttpSession {
                 resp.headers().firstValue("content-type").orElse("?"),
                 resp.uri(),
                 cookieManager.getCookieStore().getCookies().size());
+        Path loginDump = dumpBody("login-get", body);
+        if (loginDump != null) {
+            log.info("StooqHttpSession: pełne body strony logowania zapisane do: {}", loginDump.toAbsolutePath());
+        }
         logCookies("po GET login page");
 
         if (resp.statusCode() != 200) {
@@ -430,6 +439,22 @@ public class StooqHttpSession {
         return count;
     }
 
+    private static final DateTimeFormatter DUMP_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
+    /** Zapisuje pełne body do pliku w target/stooq-dumps/. Zwraca ścieżkę (albo null). */
+    private Path dumpBody(String prefix, String body) {
+        try {
+            Path dir = Paths.get("target", "stooq-dumps");
+            Files.createDirectories(dir);
+            Path file = dir.resolve(prefix + "-" + LocalDateTime.now().format(DUMP_TS) + ".html");
+            Files.writeString(file, body == null ? "" : body, StandardCharsets.UTF_8);
+            return file;
+        } catch (IOException e) {
+            log.warn("StooqHttpSession: nie udało się zapisać dumpa body: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private void submitLoginForm(LoginForm form) throws IOException, InterruptedException {
         StringBuilder body = new StringBuilder();
         for (Map.Entry<String, String> e : form.hiddenFields.entrySet()) {
@@ -462,6 +487,10 @@ public class StooqHttpSession {
                 response.headers().firstValue("content-type").orElse("?"),
                 response.uri(),
                 cookieManager.getCookieStore().getCookies().size());
+        Path postDump = dumpBody("login-post", respBody);
+        if (postDump != null) {
+            log.info("StooqHttpSession: pełne body odpowiedzi na POST zapisane do: {}", postDump.toAbsolutePath());
+        }
         logCookies("po POST login");
 
         if (response.statusCode() != 200) {

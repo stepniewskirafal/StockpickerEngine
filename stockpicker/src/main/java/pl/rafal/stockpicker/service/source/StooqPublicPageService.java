@@ -156,10 +156,33 @@ public class StooqPublicPageService {
             }
 
             String body = response.body();
-            Document doc = Jsoup.parse(body, wig20HtmlUrl);
 
-            // Diagnostic: sprawdź czy strona to consent wall / logowanie.
+            // Diagnostyka strukturalna - sprawdzamy czy jsoup w ogóle widzi tagi z których
+            // parser dostarcza tabele. Jeśli <table> jest w body ale jsoup tego nie znajduje,
+            // mamy problem z parserem HTML; jeśli brak <table> w body, mamy złe źródło.
             String bodyLower = body.toLowerCase();
+            int tableTagCount = countOccurrences(bodyLower, "<table");
+            int trTagCount = countOccurrences(bodyLower, "<tr");
+            int formTagCount = countOccurrences(bodyLower, "<form");
+            log.info("HTML surowe tagi: <html>={}, <head>={}, <body>={}, <table>={}, <tr>={}, <form>={}",
+                    bodyLower.contains("<html"), bodyLower.contains("<head"), bodyLower.contains("<body"),
+                    tableTagCount, trTagCount, formTagCount);
+
+            // Stooq serwuje HTML bez <html>/<head>/<body> wrappera - tylko szereg elementów
+            // na poziomie root. Jsoup.parse() wtedy pakuje wszystko do syntetycznego body,
+            // ale pierwszy <link> z ogromnym data: URL potrafi mu zjeść parser na większą
+            // część dokumentu. parseBodyFragment forsuje traktowanie wszystkiego jako
+            // body-content i jest wtedy bardziej odporny.
+            Document doc = Jsoup.parse(body, wig20HtmlUrl);
+            int parsedTables = doc.select("table").size();
+            if (parsedTables == 0 && tableTagCount > 0) {
+                log.warn("Domyślny parser jsoup znalazł 0/{} tabel - próbuję parseBodyFragment",
+                        tableTagCount);
+                doc = Jsoup.parseBodyFragment(body, wig20HtmlUrl);
+                parsedTables = doc.select("table").size();
+                log.info("parseBodyFragment znalazł {} tabel", parsedTables);
+            }
+
             boolean looksLikeConsentWall = bodyLower.contains("zgoda") && bodyLower.contains("cookie");
             boolean looksLikeLoginPage = bodyLower.contains("formularz logowania")
                     || (bodyLower.contains("name=\"a\"") && bodyLower.contains("name=\"b\""));
@@ -272,6 +295,16 @@ public class StooqPublicPageService {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) != -1) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
     }
 
     // ---- HTML parsing (fallback) --------------------------------------------

@@ -339,13 +339,20 @@ public class StooqHttpSession {
 
         try {
             Document doc = Jsoup.parse(body, baseUri);
+            int formsInPrimary = doc.select("form").size();
+            Element form = pickLoginForm(doc);
 
-            Element form = null;
-            for (Element candidate : doc.select("form")) {
-                if (!candidate.select("input[type=password]").isEmpty()) {
-                    form = candidate;
-                    break;
-                }
+            // Stooq pakuje HTML bez <html>/<head>/<body> - domyślny parser czasem gubi
+            // całe sekcje w pierwszym <link> z data: URL. parseBodyFragment traktuje
+            // wszystko jak body-content i znajduje formularze których zwykły parser nie widzi.
+            if (form == null) {
+                int htmlFormCount = countOccurrences(body.toLowerCase(), "<form");
+                log.warn("StooqHttpSession: domyślny parser widzi {}/{} formularzy bez input[type=password] - próbuję parseBodyFragment",
+                        formsInPrimary, htmlFormCount);
+                doc = Jsoup.parseBodyFragment(body, baseUri);
+                form = pickLoginForm(doc);
+                log.info("StooqHttpSession: parseBodyFragment widzi {} formularzy, formularz logowania {}",
+                        doc.select("form").size(), form == null ? "nie znaleziony" : "znaleziony");
             }
 
             if (form == null) {
@@ -402,6 +409,25 @@ public class StooqHttpSession {
                     e.getMessage());
         }
         return result;
+    }
+
+    private Element pickLoginForm(Document doc) {
+        for (Element candidate : doc.select("form")) {
+            if (!candidate.select("input[type=password]").isEmpty()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) != -1) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
     }
 
     private void submitLoginForm(LoginForm form) throws IOException, InterruptedException {

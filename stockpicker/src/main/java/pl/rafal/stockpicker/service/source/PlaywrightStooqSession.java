@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -197,19 +198,51 @@ public class PlaywrightStooqSession {
     }
 
     /**
-     * Wywołuje wbudowane CLI Playwrighta żeby pobrać Chromium jeśli go nie ma.
+     * Wywołuje CLI Playwrighta żeby pobrać Chromium jeśli go nie ma.
      * Bez tego pierwsze launchPersistentContext() rzuca: "Executable doesn't exist".
      * Idempotentne - dla już zainstalowanej binarki kończy się szybko.
+     *
+     * UWAGA: CLI.main() na końcu robi System.exit(0), co zabija naszego JVM-a
+     * - dlatego odpalamy go w OSOBNYM procesie Java z tym samym classpathem.
      */
     private void ensureBrowserInstalled() {
+        long start = System.currentTimeMillis();
         try {
-            log.info("PlaywrightStooqSession: sprawdzam/instaluję Chromium (idempotentnie)");
-            com.microsoft.playwright.CLI.main(new String[]{"install", "chromium"});
-        } catch (Throwable t) {
-            // CLI.main potrafi rzucać/wywoływać System.exit - łapiemy Throwable żeby nie zabić startu.
-            log.warn("PlaywrightStooqSession: instalacja Chromium rzuciła wyjątek ({}), kontynuuję - " +
-                    "jeśli launch padnie, uruchom ręcznie: 'mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args=\"install chromium\"'",
-                    t.getMessage());
+            String javaBin = ProcessHandle.current().info().command()
+                    .orElse(Paths.get(System.getProperty("java.home"), "bin", "java").toString());
+            String classpath = System.getProperty("java.class.path");
+
+            log.info("PlaywrightStooqSession: uruchamiam install chromium w osobnym procesie ({})",
+                    javaBin);
+
+            ProcessBuilder pb = new ProcessBuilder(
+                    javaBin, "-cp", classpath,
+                    "com.microsoft.playwright.CLI", "install", "chromium");
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            // Strumień stdout/stderr leci od razu do logu - pierwsze uruchomienie potrafi
+            // pokazać postęp ściągania (~170MB). Bez tego użytkownik widziałby bezruch.
+            try (var reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    log.info("[playwright-install] {}", line);
+                }
+            }
+
+            int rc = process.waitFor();
+            long elapsed = System.currentTimeMillis() - start;
+            if (rc == 0) {
+                log.info("PlaywrightStooqSession: install Chromium OK (rc={}, {} ms)", rc, elapsed);
+            } else {
+                log.warn("PlaywrightStooqSession: install Chromium zwróciło rc={} ({} ms) - " +
+                        "Playwright może nie zadziałać", rc, elapsed);
+            }
+        } catch (Exception e) {
+            log.warn("PlaywrightStooqSession: instalacja Chromium nie powiodła się ({}). " +
+                    "Uruchom ręcznie: 'mvn exec:java -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args=\"install chromium\"'",
+                    e.getMessage(), e);
         }
     }
 

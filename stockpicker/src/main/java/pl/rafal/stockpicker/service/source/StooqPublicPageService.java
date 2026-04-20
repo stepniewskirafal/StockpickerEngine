@@ -279,17 +279,24 @@ public class StooqPublicPageService {
     private List<QuoteRow> parseQuotesFromDocument(Document doc) {
         List<QuoteRow> result = new ArrayList<>();
 
+        log.info("Parsuję HTML: title='{}', body text length={}",
+                doc.title(),
+                doc.body() == null ? 0 : doc.body().text().length());
+
         Elements tables = doc.select("table");
-        log.debug("Znaleziono {} tabel na stronie", tables.size());
+        log.info("Znaleziono {} tabel na stronie", tables.size());
+
+        // Zaloguj kandydatów - ułatwia diagnozę gdy stooq zmienia layout.
+        logTableCandidates(tables);
 
         Element quotesTable = findQuotesTable(tables);
         if (quotesTable == null) {
-            log.warn("Nie znaleziono tabeli notowań w {} tabelach na stronie", tables.size());
+            log.warn("Nie znaleziono tabeli notowań wśród {} tabel na stronie", tables.size());
             return result;
         }
 
         Elements rows = quotesTable.select("tr");
-        log.debug("Parsuję {} wierszy tabeli notowań", rows.size());
+        log.info("Parsuję {} wierszy tabeli notowań", rows.size());
 
         for (Element row : rows) {
             QuoteRow quote = parseHtmlRow(row);
@@ -298,26 +305,53 @@ public class StooqPublicPageService {
             }
         }
 
+        log.info("Z {} wierszy wyparsowano {} notowań", rows.size(), result.size());
         return result;
     }
 
+    /**
+     * Strategia detekcji:
+     * 1) Tabela z największą liczbą linków do podstron stooq (/q/?s=TICKER) - to
+     *    niezmiennik tabeli z komponentami indeksu. Niezależne od nagłówków które
+     *    stooq potrafi zmieniać (Nazwa/Walor/Ticker itp.)
+     * 2) Fallback: tabela z największą liczbą linków zawierających 's=' gdziekolwiek
+     *    w href (szerszy wzorzec).
+     */
     private Element findQuotesTable(Elements tables) {
+        Element best = null;
+        int bestScore = 0;
+
         for (Element table : tables) {
-            Elements rows = table.select("tr");
-            if (rows.size() < 5) continue;
-
-            String tableText = table.text().toLowerCase();
-            boolean hasQuoteHeaders =
-                    (tableText.contains("nazwa") || tableText.contains("name"))
-                    && (tableText.contains("kurs") || tableText.contains("ostatni")
-                        || tableText.contains("zamkn"));
-
-            if (hasQuoteHeaders) {
-                log.debug("Znaleziono tabelę notowań - {} wierszy", rows.size());
-                return table;
+            int rowCount = table.select("tr").size();
+            if (rowCount < 3) continue;
+            int stockLinks = table.select("td a[href*=s=]").size();
+            if (stockLinks > bestScore) {
+                bestScore = stockLinks;
+                best = table;
             }
         }
-        return null;
+
+        if (best == null) {
+            return null;
+        }
+        log.info("Wybrano tabelę notowań: {} linków s=, {} wierszy",
+                bestScore, best.select("tr").size());
+        return best;
+    }
+
+    private void logTableCandidates(Elements tables) {
+        int printed = 0;
+        for (int i = 0; i < tables.size() && printed < 10; i++) {
+            Element table = tables.get(i);
+            Elements rows = table.select("tr");
+            int stockLinks = table.select("td a[href*=s=]").size();
+            if (rows.size() < 3 && stockLinks == 0) continue;
+            String header = rows.isEmpty() ? "" : rows.first().text().trim();
+            if (header.length() > 120) header = header.substring(0, 120) + "...";
+            log.info("Tabela[{}]: rows={}, stockLinks={}, pierwszy wiersz='{}'",
+                    i, rows.size(), stockLinks, header);
+            printed++;
+        }
     }
 
     private QuoteRow parseHtmlRow(Element row) {

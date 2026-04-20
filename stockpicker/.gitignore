@@ -1,0 +1,66 @@
+# ==============================================================================
+# SEKRETY - WAŻNE, NIE USUWAJ TEJ SEKCJI
+# ==============================================================================
+# Ten plik chroni Twoje poświadczenia stooq i inne sekrety przed przypadkowym
+# wrzuceniem do repozytorium Git. Gdy commitujesz pliki, Git używa tego pliku
+# do odfiltrowania tego, co ma być trzymane tylko lokalnie.
+
+# Pliki konfiguracyjne z poświadczeniami - NIGDY NIE COMMITUJ
+application-local.properties
+application-prod.properties
+application-dev.properties
+**/application-local.properties
+
+# Pliki z sekretami w różnych formatach (dla przyszłych rozszerzeń)
+*.secret
+*.key
+*.pem
+.env
+.env.local
+
+# ==============================================================================
+# Maven
+# ==============================================================================
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# ==============================================================================
+# IntelliJ IDEA
+# ==============================================================================
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# ==============================================================================
+# Eclipse
+# ==============================================================================
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+
+# ==============================================================================
+# VS Code
+# ==============================================================================
+.vscode/
+
+# ==============================================================================
+# OS
+# ==============================================================================
+.DS_Store
+Thumbs.db
+
+# ==============================================================================
+# Logi i tymczasowe pliki
+# ==============================================================================
+*.log
+logs/
+*.class
+hs_err_pid*
+replay_pid*

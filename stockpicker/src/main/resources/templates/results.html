@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pl" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wyniki screeningu - Stock Picker 80.40</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Wyniki screeningu</h1>
+        <a href="/" class="btn btn-outline-secondary">← Nowe wyszukiwanie</a>
+    </div>
+
+    <!-- Podsumowanie parametrów -->
+    <div class="card mb-4 bg-light border-0">
+        <div class="card-body">
+            <div class="row text-center">
+                <div class="col-md-3">
+                    <small class="text-muted d-block">Profil ryzyka</small>
+                    <strong th:text="${request.riskProfile.displayName}">-</strong>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted d-block">Horyzont</small>
+                    <strong th:text="${request.horizon.displayName}">-</strong>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted d-block">Przeanalizowano</small>
+                    <strong><span th:text="${analyzedCount}">0</span> spółek</strong>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted d-block">Kwota</small>
+                    <strong th:text="${#numbers.formatDecimal(request.investmentAmount, 0, 'POINT', 0, 'COMMA')} + ' PLN'">0 PLN</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Brak wyników -->
+    <div class="alert alert-warning" th:if="${#lists.isEmpty(results)}">
+        Brak wyników - żadna spółka nie spełniła progu minimalnego.
+        Spróbuj innych parametrów lub zmień profil ryzyka.
+    </div>
+
+    <!-- Ranking top N -->
+    <div th:each="entry, stat : ${results}" class="card mb-3 shadow-sm">
+        <div class="card-body">
+            <div class="row">
+                <!-- Lewa strona: ticker, score, cena -->
+                <div class="col-md-3 border-end">
+                    <div class="d-flex align-items-baseline">
+                        <span class="badge bg-secondary me-2" th:text="${stat.index + 1}">1</span>
+                        <h3 class="mb-0" th:text="${entry.stock.ticker}">XTB</h3>
+                    </div>
+                    <p class="text-muted mb-2" th:text="${entry.stock.name}">Nazwa</p>
+                    <p class="mb-1">
+                        <small class="text-muted">Indeks:</small>
+                        <span class="badge bg-primary" th:text="${entry.stock.index.displayName}">WIG20</span>
+                    </p>
+                    <p class="mb-1">
+                        <small class="text-muted">Sektor:</small>
+                        <span th:text="${entry.stock.sector}">Sektor</span>
+                    </p>
+                    <p class="mb-0 mt-3">
+                        <small class="text-muted">Cena bieżąca:</small><br>
+                        <strong class="h4" th:text="${#numbers.formatDecimal(entry.indicators.currentPrice, 1, 2)} + ' zł'">0.00 zł</strong>
+                    </p>
+
+                    <div class="mt-3">
+                        <small class="text-muted">Score:</small>
+                        <div class="d-flex align-items-center">
+                            <div class="progress flex-grow-1 me-2" style="height: 24px;">
+                                <div class="progress-bar"
+                                     th:classappend="${entry.score >= 65 ? 'bg-success' : (entry.score >= 50 ? 'bg-warning' : 'bg-secondary')}"
+                                     th:style="'width: ' + ${entry.score} + '%'"
+                                     th:text="${#numbers.formatDecimal(entry.score, 1, 0)}">0</div>
+                            </div>
+                        </div>
+                        <small class="fw-bold" th:text="${entry.signalStrength()}">SIGNAL</small>
+                    </div>
+                </div>
+
+                <!-- Środek: wskaźniki techniczne -->
+                <div class="col-md-5">
+                    <h6 class="text-muted">Wskaźniki techniczne (W1)</h6>
+                    <table class="table table-sm table-borderless mb-0">
+                        <tr th:if="${entry.indicators.sma10 != null}">
+                            <td class="text-muted small">SMA(10)</td>
+                            <td th:text="${#numbers.formatDecimal(entry.indicators.sma10, 1, 2)} + ' zł'">-</td>
+                            <td class="small"
+                                th:classappend="${entry.indicators.currentPrice > entry.indicators.sma10 ? 'text-success' : 'text-danger'}">
+                                <span th:text="${entry.indicators.currentPrice > entry.indicators.sma10 ? '↑ cena powyżej' : '↓ cena poniżej'}">-</span>
+                            </td>
+                        </tr>
+                        <tr th:if="${entry.indicators.sma50 != null}">
+                            <td class="text-muted small">SMA(50)</td>
+                            <td th:text="${#numbers.formatDecimal(entry.indicators.sma50, 1, 2)} + ' zł'">-</td>
+                            <td class="small"
+                                th:classappend="${entry.indicators.currentPrice > entry.indicators.sma50 ? 'text-success' : 'text-danger'}">
+                                <span th:text="${entry.indicators.currentPrice > entry.indicators.sma50 ? '↑ cena powyżej' : '↓ cena poniżej'}">-</span>
+                            </td>
+                        </tr>
+                        <tr th:if="${entry.indicators.sma100 != null}">
+                            <td class="text-muted small">SMA(100)</td>
+                            <td th:text="${#numbers.formatDecimal(entry.indicators.sma100, 1, 2)} + ' zł'">-</td>
+                            <td class="small"
+                                th:classappend="${entry.indicators.currentPrice > entry.indicators.sma100 ? 'text-success' : 'text-danger'}">
+                                <span th:text="${entry.indicators.currentPrice > entry.indicators.sma100 ? '↑ cena powyżej' : '↓ cena poniżej'}">-</span>
+                            </td>
+                        </tr>
+                        <tr th:if="${entry.indicators.sma200 != null}">
+                            <td class="text-muted small">SMA(200)</td>
+                            <td th:text="${#numbers.formatDecimal(entry.indicators.sma200, 1, 2)} + ' zł'">-</td>
+                            <td class="small"
+                                th:classappend="${entry.indicators.currentPrice > entry.indicators.sma200 ? 'text-success' : 'text-danger'}">
+                                <span th:text="${'Dystans: ' + #numbers.formatDecimal(entry.indicators.distanceFromSma200Percent(), 1, 1) + '%'}">-</span>
+                            </td>
+                        </tr>
+                        <tr th:if="${entry.indicators.rsi14 != null}">
+                            <td class="text-muted small">RSI(14)</td>
+                            <td th:text="${#numbers.formatDecimal(entry.indicators.rsi14, 1, 1)}">-</td>
+                            <td class="small">
+                                <span th:if="${entry.indicators.rsi14 > 70}" class="text-danger">wykupienie</span>
+                                <span th:if="${entry.indicators.rsi14 < 30}" class="text-primary">wyprzedanie</span>
+                                <span th:if="${entry.indicators.rsi14 >= 30 and entry.indicators.rsi14 <= 70}" class="text-success">strefa neutralna/siły</span>
+                            </td>
+                        </tr>
+                        <tr th:if="${entry.indicators.macd != null}">
+                            <td class="text-muted small">MACD</td>
+                            <td>
+                                <small th:text="${#numbers.formatDecimal(entry.indicators.macd.macdLine, 1, 3)}">0.000</small>
+                                / <small th:text="${#numbers.formatDecimal(entry.indicators.macd.signalLine, 1, 3)}">0.000</small>
+                            </td>
+                            <td class="small">
+                                <span th:if="${entry.indicators.macd.bullishCross}" class="text-success">byczy cross</span>
+                                <span th:unless="${entry.indicators.macd.bullishCross}" class="text-muted">brak crossa</span>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Prawa strona: sygnały -->
+                <div class="col-md-4">
+                    <h6 class="text-muted">Sygnały bycze</h6>
+                    <ul class="list-unstyled small mb-3">
+                        <li th:each="signal : ${entry.bullishSignals}" class="mb-1">
+                            <span class="text-success">✓</span> <span th:text="${signal}">sygnał</span>
+                        </li>
+                    </ul>
+                    <div th:unless="${#lists.isEmpty(entry.warnings)}">
+                        <h6 class="text-muted">Ostrzeżenia</h6>
+                        <ul class="list-unstyled small">
+                            <li th:each="warning : ${entry.warnings}" class="mb-1">
+                                <span class="text-warning">⚠</span> <span th:text="${warning}">ostrzeżenie</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="alert alert-secondary mt-4">
+        <small>
+            <strong>Zastrzeżenie:</strong> Aplikacja ma charakter informacyjno-edukacyjny i nie stanowi
+            rekomendacji inwestycyjnej w rozumieniu Rozporządzenia MAR ani usługi doradztwa inwestycyjnego.
+            Decyzje inwestycyjne podejmujesz na własną odpowiedzialność. Scoring jest heurystyką
+            techniczną - nie uwzględnia fundamentów spółki, wydarzeń jednorazowych ani makroekonomii.
+        </small>
+    </div>
+</div>
+</body>
+</html>

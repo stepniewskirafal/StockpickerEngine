@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pl" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Picker Engine 80.40</title>
+    <!-- Bootstrap 5 z CDN - nie musimy trzymać własnych CSS/JS lokalnie -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-body p-4 p-md-5">
+                    <!-- Menu nawigacyjne - przełączanie między zakładkami -->
+                    <nav class="mb-4">
+                        <ul class="nav nav-pills">
+                            <li class="nav-item">
+                                <a class="nav-link active" href="/">Screening</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" href="/wig20">Notowania WIG20</a>
+                            </li>
+                        </ul>
+                    </nav>
+
+                    <h1 class="mb-2">Stock Picker Engine <span class="badge bg-primary">80.40</span></h1>
+                    <p class="text-muted mb-4">
+                        Automatyczny screener techniczny spółek z WIG20, mWIG40 i sWIG80.
+                        Analizuje SMA, SMMA, RSI, MACD i ZigZag na interwale tygodniowym.
+                    </p>
+
+                    <form th:action="@{/screen}" th:object="${request}" method="post">
+
+                        <!-- Profil ryzyka -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Profil ryzyka</label>
+                            <div class="row g-2">
+                                <div class="col-md-4" th:each="profile : ${riskProfiles}">
+                                    <div class="form-check form-check-inline w-100">
+                                        <input class="form-check-input" type="radio"
+                                               th:field="*{riskProfile}"
+                                               th:value="${profile}"
+                                               th:id="${'profile-' + profile}">
+                                        <label class="form-check-label"
+                                               th:for="${'profile-' + profile}"
+                                               th:text="${profile.displayName}">Profil</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <small class="text-muted">
+                                Agresywny toleruje wyższe RSI i premiuje świeże momentum.
+                                Defensywny szuka stabilnych trendów blisko SMA200.
+                            </small>
+                        </div>
+
+                        <!-- Horyzont czasowy -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Horyzont inwestycyjny</label>
+                            <select class="form-select" th:field="*{horizon}">
+                                <option th:each="h : ${horizons}"
+                                        th:value="${h}"
+                                        th:text="${h.displayName}">Horyzont</option>
+                            </select>
+                        </div>
+
+                        <!-- Indeksy -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Zakres indeksów</label>
+                            <div class="row g-2">
+                                <div class="col-md-4" th:each="index : ${indexes}">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               th:field="*{selectedIndexes}"
+                                               th:value="${index}"
+                                               th:id="${'index-' + index}">
+                                        <label class="form-check-label"
+                                               th:for="${'index-' + index}"
+                                               th:text="${index.displayName}">Indeks</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Kwota -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold" for="amount">Kwota do zainwestowania (PLN)</label>
+                            <input type="number" class="form-control" id="amount"
+                                   th:field="*{investmentAmount}" min="100" step="100">
+                        </div>
+
+                        <!-- Błędy walidacji -->
+                        <div class="alert alert-danger" th:if="${#fields.hasErrors('*')}">
+                            <ul class="mb-0">
+                                <li th:each="err : ${#fields.allErrors()}" th:text="${err}"></li>
+                            </ul>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                            Uruchom screening
+                        </button>
+                    </form>
+
+                    <div class="mt-4 pt-3 border-top">
+                        <small class="text-muted">
+                            <strong>Uwaga:</strong> Pierwsze uruchomienie może potrwać 30-60 sekund
+                            (pobieranie danych ze stooq dla ~140 spółek). Kolejne uruchomienia są
+                            znacznie szybsze dzięki cache 4h.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

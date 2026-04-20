@@ -56,6 +56,21 @@
             <version>1.18.1</version>
         </dependency>
 
+        <!--
+            Headless Chromium do scrapowania stron za consent wall (CMP).
+            Stooq.pl serwuje WIG20 components zza Google Funding Choices, więc
+            zwykły HttpClient widzi tylko ~200KB JS-loadera. Playwright odpala
+            prawdziwego Chromium, który wykonuje JS, klika "Akceptuję" raz,
+            zapamiętuje cookie FCCDCF i odtąd dostaje pełną stronę.
+            Pierwsze uruchomienie ściąga ~170MB binarki Chromium do
+            ~/.cache/ms-playwright/. Zob. PlaywrightStooqSession.
+        -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>1.49.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

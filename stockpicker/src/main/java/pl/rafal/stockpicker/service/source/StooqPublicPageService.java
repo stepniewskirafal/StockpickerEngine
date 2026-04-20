@@ -51,6 +51,7 @@ import java.util.List;
 public class StooqPublicPageService {
 
     private final StooqHttpSession session;
+    private final PlaywrightStooqSession playwrightSession;
 
     @Value("${stockpicker.stooq.wig20-url:https://stooq.pl/q/i/?s=wig20}")
     private String wig20HtmlUrl;
@@ -139,70 +140,37 @@ public class StooqPublicPageService {
     }
 
     /**
-     * Fallback: pobiera stronę HTML przez zalogowaną sesję (która omija CMP
-     * consent wall) i parsuje tabelę notowań tym samym parserem co wcześniej.
+     * Fallback: pobiera stronę HTML przez Playwright (headless Chromium).
+     * Stooq.pl WIG20 jest zza Google Funding Choices CMP, który dostarcza
+     * tabelę z komponentami dopiero po wykonaniu JavaScriptu i akceptacji
+     * zgody. Zwykły HttpClient widzi tylko 200KB JS-loadera.
      */
     private ScrapeResult tryFetchHtml(long startTime) {
-        log.info("Pobieram HTML WIG20 z {}", wig20HtmlUrl);
+        log.info("Pobieram HTML WIG20 z {} (przez Playwright)", wig20HtmlUrl);
         try {
-            HttpResponse<String> response = session.fetchString(wig20HtmlUrl, StandardCharsets.UTF_8);
+            // waitForSelector="table" - czekamy aż JS dorzuci tabele do DOM zanim pobierzemy HTML.
+            String body = playwrightSession.fetchRenderedPage(wig20HtmlUrl, "table");
             long elapsed = System.currentTimeMillis() - startTime;
-            String contentType = response.headers().firstValue("content-type").orElse("?");
-            int bodyLen = response.body() == null ? 0 : response.body().length();
-            log.info("HTML response: HTTP {} ({} bajtów, content-type={}, finalUri={}, {} ms)",
-                    response.statusCode(), bodyLen, contentType, response.uri(), elapsed);
-
-            if (response.statusCode() != 200) {
-                String snippet = response.body() == null ? null
-                        : response.body().substring(0, Math.min(500, response.body().length()));
-                return ScrapeResult.failure(
-                        "HTML HTTP " + response.statusCode(), wig20HtmlUrl, elapsed, snippet);
-            }
-
-            String body = response.body();
+            log.info("Playwright zwrócił {} bajtów w {} ms", body.length(), elapsed);
 
             // Dump pełnego body do pliku - ułatwia porównanie z tym co widzi przeglądarka.
-            // Lokalizacja w target/ żeby było łatwo znaleźć, nazwa ze znacznikiem czasu
-            // żeby kolejne odświeżenia nie nadpisywały poprzednich dumpów.
             Path dumpPath = dumpBodyToFile("wig20-html", body);
             if (dumpPath != null) {
                 log.info("Pełne body HTML zapisane do: {}", dumpPath.toAbsolutePath());
             }
 
-            // Diagnostyka strukturalna - sprawdzamy czy jsoup w ogóle widzi tagi z których
-            // parser dostarcza tabele. Jeśli <table> jest w body ale jsoup tego nie znajduje,
-            // mamy problem z parserem HTML; jeśli brak <table> w body, mamy złe źródło.
+            // Diagnostyka strukturalna - po wyrenderowaniu przez Chromium powinniśmy widzieć tabele.
             String bodyLower = body.toLowerCase();
             int tableTagCount = countOccurrences(bodyLower, "<table");
             int trTagCount = countOccurrences(bodyLower, "<tr");
-            int formTagCount = countOccurrences(bodyLower, "<form");
-            log.info("HTML surowe tagi: <html>={}, <head>={}, <body>={}, <table>={}, <tr>={}, <form>={}",
-                    bodyLower.contains("<html"), bodyLower.contains("<head"), bodyLower.contains("<body"),
-                    tableTagCount, trTagCount, formTagCount);
+            log.info("HTML wyrenderowany: <table>={}, <tr>={}", tableTagCount, trTagCount);
 
-            // Stooq serwuje HTML bez <html>/<head>/<body> wrappera - tylko szereg elementów
-            // na poziomie root. Jsoup.parse() wtedy pakuje wszystko do syntetycznego body,
-            // ale pierwszy <link> z ogromnym data: URL potrafi mu zjeść parser na większą
-            // część dokumentu. parseBodyFragment forsuje traktowanie wszystkiego jako
-            // body-content i jest wtedy bardziej odporny.
             Document doc = Jsoup.parse(body, wig20HtmlUrl);
             int parsedTables = doc.select("table").size();
             if (parsedTables == 0 && tableTagCount > 0) {
                 log.warn("Domyślny parser jsoup znalazł 0/{} tabel - próbuję parseBodyFragment",
                         tableTagCount);
                 doc = Jsoup.parseBodyFragment(body, wig20HtmlUrl);
-                parsedTables = doc.select("table").size();
-                log.info("parseBodyFragment znalazł {} tabel", parsedTables);
-            }
-
-            boolean looksLikeConsentWall = bodyLower.contains("zgoda") && bodyLower.contains("cookie");
-            boolean looksLikeLoginPage = bodyLower.contains("formularz logowania")
-                    || (bodyLower.contains("name=\"a\"") && bodyLower.contains("name=\"b\""));
-            if (looksLikeConsentWall) {
-                log.warn("HTML wygląda na consent wall (zgoda/cookie) - sesja prawdopodobnie niezalogowana");
-            }
-            if (looksLikeLoginPage) {
-                log.warn("HTML wygląda na stronę logowania - sesja wygasła lub login nie powiódł się");
             }
 
             List<QuoteRow> quotes = parseQuotesFromDocument(doc);
@@ -211,26 +179,23 @@ public class StooqPublicPageService {
                 String htmlSnippet = body.length() > 2000
                         ? body.substring(0, 2000) + "\n... (obcięto)"
                         : body;
-                log.warn("Parser HTML nie znalazł tabeli notowań. HTML length: {}, consentWall={}, loginPage={}",
-                        body.length(), looksLikeConsentWall, looksLikeLoginPage);
+                log.warn("Parser HTML nie znalazł tabeli notowań po Playwright. HTML length: {}, tabel <table>={}",
+                        body.length(), tableTagCount);
                 return ScrapeResult.failure(
-                        "Strona załadowana ale parser nie znalazł tabeli notowań. " +
-                        "Jeśli widzisz w HTML consent wall - sprawdź czy logowanie do stooq " +
-                        "jest aktywne (stockpicker.stooq.login-enabled=true).",
+                        "Strona zrenderowana przez Playwright, ale parser nie znalazł tabeli notowań. " +
+                        "Sprawdź dump w target/stooq-dumps/ - czy stooq zmienił layout?",
                         wig20HtmlUrl, elapsed, htmlSnippet);
             }
 
             log.info("HTML sparsowany: {} wierszy w {} ms", quotes.size(), elapsed);
             return ScrapeResult.success(quotes, wig20HtmlUrl, elapsed);
 
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
+        } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - startTime;
-            log.error("Błąd pobierania HTML ({}): {}", e.getClass().getSimpleName(), e.getMessage(), e);
+            log.error("Błąd pobierania HTML przez Playwright ({}): {}",
+                    e.getClass().getSimpleName(), e.getMessage(), e);
             return ScrapeResult.failure(
-                    "HTML error: " + e.getClass().getSimpleName() + " - " + e.getMessage(),
+                    "Playwright error: " + e.getClass().getSimpleName() + " - " + e.getMessage(),
                     wig20HtmlUrl, elapsed, null);
         }
     }

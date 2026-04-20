@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.SSLSession;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -19,10 +21,14 @@ import java.net.HttpCookie;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -59,7 +65,7 @@ import java.util.Map;
 @Slf4j
 public class StooqHttpSession {
 
-    @Value("${stockpicker.stooq.login-url:https://stooq.pl/login/}")
+    @Value("${stockpicker.stooq.login-url:https://stooq.pl/}")
     private String loginUrl;
 
     @Value("${stockpicker.stooq.timeout-seconds:10}")
@@ -135,32 +141,85 @@ public class StooqHttpSession {
     /**
      * Pobiera body odpowiedzi jako string z wybranym kodowaniem.
      * Stooq serwuje niektóre strony w ISO-8859-2 - wtedy podaj Charset.forName("ISO-8859-2").
+     *
+     * Pod spodem pobiera bajty i sam obsługuje Content-Encoding (gzip/deflate),
+     * bo Java HttpClient nie dekompresuje automatycznie. Jeśli pominiemy tę
+     * logikę i serwer zwróci gzip, doc.body().text() daje pustego stringa -
+     * tak się właśnie zdarzyło na stooq.pl/q/i/?s=wig20.
      */
     public HttpResponse<String> fetchString(String url, Charset charset)
             throws IOException, InterruptedException {
         ensureLoggedIn();
+        return rawFetchString(url, charset, true);
+    }
+
+    /**
+     * Wewnętrzne fetchString bez wymuszania logowania (używane w bootstrapie sesji).
+     */
+    private HttpResponse<String> rawFetchString(String url, Charset charset, boolean isUserRequest)
+            throws IOException, InterruptedException {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,text/csv,*/*;q=0.8")
                 .header("Accept-Language", "pl-PL,pl;q=0.9,en;q=0.8")
+                // Deklarujemy co potrafimy zdekompresować. Brotli ('br') celowo pomijamy.
+                .header("Accept-Encoding", "gzip, deflate, identity")
                 .timeout(Duration.ofSeconds(timeoutSeconds))
                 .GET()
                 .build();
 
-        log.debug("StooqHttpSession: GET {} (charset={}, loggedIn={}, cookies={})",
-                url, charset.name(), isLoggedIn, cookieManager.getCookieStore().getCookies().size());
+        return sendAndDecode(request, charset, isUserRequest);
+    }
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(charset));
+    /**
+     * Wysyła request, dekompresuje body, opakowuje w HttpResponse&lt;String&gt;.
+     * Używane przez wszystkie ścieżki (GET publiczne, GET/POST logowania), żeby
+     * każde wywołanie dostało spójną obsługę gzip/deflate.
+     */
+    private HttpResponse<String> sendAndDecode(HttpRequest request, Charset charset, boolean isUserRequest)
+            throws IOException, InterruptedException {
+        HttpResponse<byte[]> raw = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
 
-        String body = response.body();
-        int bodyLen = body == null ? 0 : body.length();
-        log.debug("StooqHttpSession: GET {} -> HTTP {} (body={} bajtów, content-type={})",
-                url, response.statusCode(), bodyLen,
-                response.headers().firstValue("content-type").orElse("?"));
+        byte[] bytes = raw.body() == null ? new byte[0] : raw.body();
+        String encoding = raw.headers().firstValue("content-encoding").orElse("identity").toLowerCase();
+        byte[] decoded = decodeBody(bytes, encoding);
 
-        return response;
+        if (log.isDebugEnabled()) {
+            log.debug("StooqHttpSession: {} {} -> HTTP {} (rawBytes={}, decodedBytes={}, content-type={}, content-encoding={})",
+                    request.method(), request.uri(), raw.statusCode(), bytes.length, decoded.length,
+                    raw.headers().firstValue("content-type").orElse("?"),
+                    encoding);
+        }
+        if (isUserRequest && bytes.length > 0 && !"identity".equals(encoding)) {
+            log.info("StooqHttpSession: dekompresja {} - {} bajtów -> {} bajtów",
+                    encoding, bytes.length, decoded.length);
+        }
+
+        String body = new String(decoded, charset);
+        return new WrappedResponse(raw, body);
+    }
+
+    private byte[] decodeBody(byte[] bytes, String encoding) throws IOException {
+        if (bytes.length == 0) return bytes;
+        try {
+            if ("gzip".equals(encoding) || "x-gzip".equals(encoding)) {
+                try (GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
+                    return in.readAllBytes();
+                }
+            }
+            if ("deflate".equals(encoding)) {
+                try (InflaterInputStream in = new InflaterInputStream(new ByteArrayInputStream(bytes))) {
+                    return in.readAllBytes();
+                }
+            }
+        } catch (IOException e) {
+            log.warn("StooqHttpSession: dekompresja '{}' nie powiodła się ({}), zwracam surowe bajty",
+                    encoding, e.getMessage());
+            return bytes;
+        }
+        return bytes;
     }
 
     /**
@@ -223,13 +282,13 @@ public class StooqHttpSession {
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "pl-PL,pl;q=0.9,en;q=0.8")
+                .header("Accept-Encoding", "gzip, deflate, identity")
                 .timeout(Duration.ofSeconds(timeoutSeconds))
                 .GET()
                 .build();
 
         log.info("StooqHttpSession: GET {} (pobieram stronę logowania)", loginUrl);
-        HttpResponse<String> resp = httpClient.send(
-                getRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> resp = sendAndDecode(getRequest, StandardCharsets.UTF_8, false);
 
         String body = resp.body() == null ? "" : resp.body();
         log.info("StooqHttpSession: GET {} -> HTTP {} (body={} bajtów, content-type={}, finalUri={}, cookies={})",
@@ -346,6 +405,7 @@ public class StooqHttpSession {
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "pl-PL,pl;q=0.9,en;q=0.8")
+                .header("Accept-Encoding", "gzip, deflate, identity")
                 .header("Referer", loginUrl)
                 .header("Origin", extractOrigin(loginUrl))
                 .timeout(Duration.ofSeconds(timeoutSeconds))
@@ -355,8 +415,7 @@ public class StooqHttpSession {
         log.info("StooqHttpSession: POST {} (formFields={}, bodyBytes={})",
                 form.actionUrl, countFields(body.toString()), body.length());
 
-        HttpResponse<String> response = httpClient.send(
-                loginRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = sendAndDecode(loginRequest, StandardCharsets.UTF_8, false);
 
         String respBody = response.body() == null ? "" : response.body();
         log.info("StooqHttpSession: POST {} -> HTTP {} (body={} bajtów, content-type={}, finalUri={}, cookies={})",
@@ -461,5 +520,29 @@ public class StooqHttpSession {
         String loginFieldName;
         String passwordFieldName;
         Map<String, String> hiddenFields;
+    }
+
+    /**
+     * Opakowuje HttpResponse&lt;byte[]&gt; i udostępnia już zdekompresowane body
+     * jako String. Dzięki temu wywołujący widzą znajomy HttpResponse&lt;String&gt;
+     * bez martwienia się o Content-Encoding.
+     */
+    private static final class WrappedResponse implements HttpResponse<String> {
+        private final HttpResponse<byte[]> delegate;
+        private final String body;
+
+        WrappedResponse(HttpResponse<byte[]> delegate, String body) {
+            this.delegate = delegate;
+            this.body = body;
+        }
+
+        @Override public int statusCode() { return delegate.statusCode(); }
+        @Override public HttpRequest request() { return delegate.request(); }
+        @Override public Optional<HttpResponse<String>> previousResponse() { return Optional.empty(); }
+        @Override public HttpHeaders headers() { return delegate.headers(); }
+        @Override public String body() { return body; }
+        @Override public Optional<SSLSession> sslSession() { return delegate.sslSession(); }
+        @Override public URI uri() { return delegate.uri(); }
+        @Override public HttpClient.Version version() { return delegate.version(); }
     }
 }
